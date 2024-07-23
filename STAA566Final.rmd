@@ -1,0 +1,154 @@
+---
+title: "Predicting the Prize Money for LPGA Golfers using Correlation, Principal Component Analysis, and Linear Regression"
+author: "Zarah Mattox"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document: default
+  pdf_document: default
+always_allow_html: true
+---
+
+
+```{r setup, message = FALSE, include = FALSE}
+## Preparation  
+knitr::opts_chunk$set(echo = TRUE)
+# my_packages <- c("tidyverse", "broom", "coefplot", "cowplot",
+#                  "gapminder", "GGally", "ggrepel", "ggridges", "gridExtra",
+#                  "here", "interplot", "margins", "maps", "mapproj",
+#                  "mapdata", "MASS", "quantreg", "rlang", "scales",
+#                  "survey", "srvyr", "viridis", "viridisLite", "devtools")
+library(tidyverse)
+library(ggrepel)
+library(socviz)
+library(mapproj)
+library(statebins)
+library(gapminder)
+library(maps)
+library(scales)
+library(broom)
+library(GGally)
+library(rstanarm)
+library("bayesplot")
+library(patchwork)
+library(plotly)
+library(ggbiplot)
+```
+
+
+```{r import data, include = FALSE}
+## Load data
+lpga <- read.csv("lpga2022.csv")
+## Remove extraneous columns
+lpga_num <- lpga %>% select(-Golfer,-Nation,-Region, -fairways, -totPutts, -fairAtt, -events, -sandAtt) 
+## Move totPrize to the first column
+lpga_num <- lpga_num[c(5, 1, 2, 3, 4, 6, 7, 8)]
+```
+
+### Introduction  
+
+The Ladies Professional Golf Assciation (LPGA) has become more popular over the years, and there is increased interest in the factors that affect a golfer's performance. If we can find relationships between data about a golfer's game the the prize money earned, we may be able to identify factors that could help an athlete be more financially successful.  
+
+For this analysis, we are using a dataset of performance statistics and prize winnings for 158 LPGA players in the 2022 season (<www.lpga.com>). The response variable (totPrize) is the total prize money earned in the 2022 season. Possible predictor variables include percentage of fairways hit (fairPct), total number of rounds (totRounds), average putts per round (avePutts), percentage of greens in regulation (greenReg), average drive distance on par 4 and 5 holes in yards (driveDist), number of holes with par or better when in sandtrap (sandSaves), and sand save percentage (sandPct). All data are numeric. We assume that total prize money earned is a valid indicator of financial success and that the possible predictor variables are valid and reliable data that provide a range of context for golf skill.
+
+First, we will examine associations within the data with correlation, followed by principal component analysis. We will incorporate these findings into a regression model that predicts total prize money. By selecting a limited number of predictor variables, we can offer a model that suggests key areas for golfers to focus their efforts to improve their game and increase prize money.
+
+***
+
+### Outcome  
+
+
+#### Pairs plot  
+
+
+```{r, message=FALSE, fig.height=6, fig.width=9, echo=FALSE}
+p_pairs <- ggpairs(lpga_num, axisLabels="none")
+p_pairs
+```
+**Figure 1.** Pairs plot of variables in the LPGA dataset.  
+
+
+Figure 1 displays histograms of each variable, pairwise scatter plots, and correlations. We can see that totPrize is right-skewed due to two outliers with extremely high earnings. The variables that have the three strongest correlations with totPrize are greenReg, totRounds, and sandSaves. The scatter plots for these suggest a nonlinear relationship. Based on the pairs plot, a regression using greenReg, totRounds, and sandSaves with a logarithmic transformation on the response variable may be appropriate.  
+
+
+***
+
+#### Principal Component Analysis
+
+```{r, message=FALSE, echo=FALSE, results=FALSE, fig.height=6, fig.width=9 }
+library(ggbiplot)
+pc <- prcomp(lpga_num)
+s_pc <- summary(pc)
+str(s_pc)
+
+pc <- prcomp(lpga_num, scale=TRUE) ##Standardize data
+
+p_pca <- ggbiplot(pc, obs.scale=1, var.scale=1)
+p_pca
+```
+**Figure 2.** Principal Component Analysis of variables in the LPGA dataset.  
+
+
+Figure 2 displays principal component analysis (PCA). This supports observations from the pairs plot. The PCA indicates that most of the variance in PC1 is due to fairPct and driveDist, while the other variables largely contribute to PC2. Complementing the pairs plot, the variables sandSaves, totRounds, and greenReg are most similar to totPrize.  
+
+***
+
+#### Linear Regression  
+
+```{r, cache=TRUE, message=FALSE, echo=FALSE, results=FALSE, warning=FALSE}
+set.seed(566)
+
+## Base model: logarithmic transformation of response with all predictors
+fit_base <- stan_glm(log(totPrize) ~ ., data=lpga_num, refresh=0)
+fit_base
+
+mean(bayes_R2(fit_base))
+mean(loo_R2(fit_base))
+
+k_base <- kfold(fit_base, K=10)
+
+
+## Simple model: logarithmic transformation of response with sandSaves, totRounds, greenReg
+fit <- stan_glm(log(totPrize) ~ sandSaves + totRounds + greenReg, data=lpga_num, refresh=0)
+fit
+
+
+mean(bayes_R2(fit))
+mean(loo_R2(fit))
+
+k_fit <- kfold(fit, K=10)
+
+
+loo_compare(k_base,k_fit)
+
+```
+
+**Model 1:**  
+
+$$log(totPrize) = 17.237 + .207 * greenReg + .024 * sandSaves + .015 * fairPct + .008 * totRounds + .003 * driveDist - .732 * avePutts - .009 * sandPct$$
+
+**Model 2:**  
+
+$$log(totPrize) = -1.641 + .175 * greenReg + .034 * sandSaves + .015 * totRounds$$
+
+
+**Table 1.** Comparison of model diagnoistics including Bayesian $R^2$ and LOO-adjusted $R^2$.
+
+\[
+\begin{array} {lccccc}
+Model & Predictor\: Variables & R^2\: Bayes & LOO-adjusted\: R^2 \\\hline
+\mbox{Model 1} & \mbox{all} & 0.82 & 0.81 \\
+\mbox{Model 2} & \mbox{sandSaves, totRounds, greenReg} & 0.75 & 0.74 \\\hline
+\end{array}
+\]
+
+Model 1 has a stronger correlation, but Model 2 does fairly well with fewer predictor variables. Overfitting does not appear to be a problem for either model. The top components found through correlation and PCA perform well in the regression.
+
+***
+
+### Discussion  
+
+Based on these analyses, the strongest factors influencing total prize money earned in 2022 are total number of rounds, percentage of greens in regulation, and number of holes with par or better when in sandtrap. The pairs plot showed that totPrize had strongest correlation with these predictor variables. The principal component analysis indicated that these three predictors are very imilar to the response variable. Finally, the regression based on these three predictors is a fair model. Although the regression including all predictor variables results in a better model, it comes at the cost of greater complexity. The purpose of this analysis was to identify the most powerful predictors for prize earnings, so the simple model is better for our purposes.
+
+Further analysis that extends beyond the 2022 season would be a welcome next step. This analysis is limited in scope and cannot claim to precisely predict prize money earned, but we are confident that the three factors identified are closely connected to price money earned based on these data.
+
+For LPGA golfers who want to improve their earnings, it may be best to prioritize on a few areas of improvement. Playing more rounds, focusing on high percentage of greens in regulation, and making par in a sandtrap are great areas of focus. Small changes can have a big impact on performance, especially at the professional level. Focusing on these three components is a good starting place for LPGA golfers to improve their game and earn more prize money.
